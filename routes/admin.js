@@ -1114,11 +1114,22 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
         // Dosyaları bölüm numarasına göre sırala
         const sortedFiles = files.data.files.sort((a, b) => {
           const getEpisodeNumber = (filename) => {
-            // Sayı ve fin/final kombinasyonlarını bul
-            const numberMatch = filename.match(/[_\s](\d{1,3})(?:fin|final)?[_\s.]/i) || 
-                              filename.match(/[_\s](\d{1,3})$/i) ||
-                              filename.match(/\((\d{1,3})\)/);
-            return numberMatch ? parseInt(numberMatch[1]) : 999999;
+            // Farklı formatlardaki bölüm numaralarını bul
+            const patterns = [
+              /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,  // Normal format: _12_ veya _12fin_
+              /[_\s](\d{1,3})$/i,                      // Sonda numara: _12
+              /\((\d{1,3})\)/,                         // Parantez içinde: (12)
+              /Part\s*\d+\s*[\._](\d{1,3})[_\s.]/i,    // Part X.12 veya Part X_12
+              /Part\s*\d+\s*[_\s.](\d{1,3})/i         // Part X_12 veya Part X.12
+            ];
+
+            for (const pattern of patterns) {
+              const match = filename.match(pattern);
+              if (match) {
+                return parseInt(match[1]);
+              }
+            }
+            return 999999;
           };
           return getEpisodeNumber(a.name) - getEpisodeNumber(b.name);
         });
@@ -1126,10 +1137,23 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
         console.log('\n=== BULUNAN DOSYALAR (SIRALI) ===');
         console.log('Toplam dosya sayısı:', sortedFiles.length);
         sortedFiles.forEach((file, index) => {
-          const numberMatch = file.name.match(/[_\s](\d{1,3})(?:fin|final)?[_\s.]/i) || 
-                            file.name.match(/[_\s](\d{1,3})$/i) ||
-                            file.name.match(/\((\d{1,3})\)/);
-          const episodeNumber = numberMatch ? parseInt(numberMatch[1]) : null;
+          const patterns = [
+            /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,
+            /[_\s](\d{1,3})$/i,
+            /\((\d{1,3})\)/,
+            /Part\s*\d+\s*[\._](\d{1,3})[_\s.]/i,
+            /Part\s*\d+\s*[_\s.](\d{1,3})/i
+          ];
+
+          let episodeNumber = null;
+          for (const pattern of patterns) {
+            const match = file.name.match(pattern);
+            if (match) {
+              episodeNumber = parseInt(match[1]);
+              break;
+            }
+          }
+
           const isFinal = /fin|final/i.test(file.name) ? ' (Final)' : '';
           console.log(`${index + 1}. ${file.name} (Bölüm: ${episodeNumber || 'Belirsiz'}${isFinal}) (${Math.round(file.size / 1024 / 1024)}MB)`);
         });
@@ -1175,10 +1199,23 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
 
               try {
                 // Dosya adından bölüm numarasını çıkar
-                const numberMatch = file.name.match(/[_\s](\d{1,3})(?:fin|final)?[_\s.]/i) || 
-                                  file.name.match(/[_\s](\d{1,3})$/i) ||
-                                  file.name.match(/\((\d{1,3})\)/);
-                const episodeNumber = numberMatch ? parseInt(numberMatch[1]) : null;
+                const patterns = [
+                  /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,
+                  /[_\s](\d{1,3})$/i,
+                  /\((\d{1,3})\)/,
+                  /Part\s*\d+\s*[\._](\d{1,3})[_\s.]/i,
+                  /Part\s*\d+\s*[_\s.](\d{1,3})/i
+                ];
+
+                let episodeNumber = null;
+                for (const pattern of patterns) {
+                  const match = file.name.match(pattern);
+                  if (match) {
+                    episodeNumber = parseInt(match[1]);
+                    break;
+                  }
+                }
+
                 const isFinal = /fin|final/i.test(file.name);
 
                 if (!episodeNumber || episodeNumber > 999) {
