@@ -701,9 +701,9 @@ router.delete('/notifications', auth, async (req, res) => {
 // Kullanıcı profili görüntüleme endpoint'i
 router.get('/profile/:username', async (req, res) => {
   try {
-    // Kullanıcı adını küçük harfe çevir
-    const username = req.params.username.toLowerCase();
-    const user = await User.findOne({ username })
+    // Büyük/küçük harf duyarsız arama için regex kullan
+    const usernameRegex = new RegExp('^' + req.params.username + '$', 'i');
+    const user = await User.findOne({ username: usernameRegex })
       .populate('watchList')
       .populate('favorites')
       .populate({
