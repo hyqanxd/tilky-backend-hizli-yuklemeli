@@ -1114,7 +1114,9 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
         // Dosyaları bölüm numarasına göre sırala
         const sortedFiles = files.data.files.sort((a, b) => {
           const getEpisodeNumber = (filename) => {
-            const match = filename.match(/[_\s(](\d{1,3})[_\s.)]/) || filename.match(/\((\d{1,3})\)/);
+            // Önce fin/final ifadelerini temizle ve bölüm numarasını bul
+            const cleanName = filename.replace(/[\s_]*(fin|final)[\s_]*/i, '');
+            const match = cleanName.match(/[_\s(](\d{1,3})[_\s.)]/) || cleanName.match(/\((\d{1,3})\)/);
             return match ? parseInt(match[1]) : 999999;
           };
           return getEpisodeNumber(a.name) - getEpisodeNumber(b.name);
@@ -1123,9 +1125,11 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
         console.log('\n=== BULUNAN DOSYALAR (SIRALI) ===');
         console.log('Toplam dosya sayısı:', sortedFiles.length);
         sortedFiles.forEach((file, index) => {
-          const episodeMatch = file.name.match(/[_\s(](\d{1,3})[_\s.)]/) || file.name.match(/\((\d{1,3})\)/);
+          const cleanName = file.name.replace(/[\s_]*(fin|final)[\s_]*/i, '');
+          const episodeMatch = cleanName.match(/[_\s(](\d{1,3})[_\s.)]/) || cleanName.match(/\((\d{1,3})\)/);
           const episodeNumber = episodeMatch ? parseInt(episodeMatch[1]) : null;
-          console.log(`${index + 1}. ${file.name} (Bölüm: ${episodeNumber || 'Belirsiz'}) (${Math.round(file.size / 1024 / 1024)}MB)`);
+          const isFinal = /fin|final/i.test(file.name) ? ' (Final)' : '';
+          console.log(`${index + 1}. ${file.name} (Bölüm: ${episodeNumber || 'Belirsiz'}${isFinal}) (${Math.round(file.size / 1024 / 1024)}MB)`);
         });
 
         if (!sortedFiles.length) {
@@ -1169,8 +1173,11 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
 
               try {
                 // Dosya adından bölüm numarasını çıkar
-                const episodeMatch = file.name.match(/[_\s(](\d{1,3})[_\s.)]/) || file.name.match(/\((\d{1,3})\)/);
+                const cleanName = file.name.replace(/[\s_]*(fin|final)[\s_]*/i, '');
+                const episodeMatch = cleanName.match(/[_\s(](\d{1,3})[_\s.)]/) || cleanName.match(/\((\d{1,3})\)/);
                 const episodeNumber = episodeMatch ? parseInt(episodeMatch[1]) : null;
+                const isFinal = /fin|final/i.test(file.name);
+
                 if (!episodeNumber || episodeNumber > 999) {
                   console.log('❌ Geçerli bölüm numarası bulunamadı, atlanıyor');
                   stats.skipped++;
