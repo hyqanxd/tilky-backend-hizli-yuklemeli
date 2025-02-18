@@ -1082,9 +1082,10 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
 
               try {
                 // Dosya adından bölüm numarasını çıkar
-                const episodeNumber = parseInt(file.name.match(/\d+/)?.[0]);
-                if (!episodeNumber) {
-                  console.log('❌ Bölüm numarası bulunamadı, atlanıyor');
+                const episodeMatch = file.name.match(/[_\s](\d{1,3})[_\s.]/);
+                const episodeNumber = episodeMatch ? parseInt(episodeMatch[1]) : null;
+                if (!episodeNumber || episodeNumber > 999) {
+                  console.log('❌ Geçerli bölüm numarası bulunamadı, atlanıyor');
                   stats.skipped++;
                   continue;
                 }
