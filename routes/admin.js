@@ -1116,17 +1116,26 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
           const getEpisodeNumber = (filename) => {
             // Farklı formatlardaki bölüm numaralarını bul
             const patterns = [
-              /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,  // Normal format: _12_ veya _12fin_
-              /[_\s](\d{1,3})$/i,                      // Sonda numara: _12
-              /\((\d{1,3})\)/,                         // Parantez içinde: (12)
-              /Part\s*\d+\s*[\._](\d{1,3})[_\s.]/i,    // Part X.12 veya Part X_12
-              /Part\s*\d+\s*[_\s.](\d{1,3})/i         // Part X_12 veya Part X.12
+              // Part X formatları
+              /Part\s*(\d+)\s*(?:Episode|Ep|Bölüm|B[oö]l[uü]m)?\s*(\d{1,3})/i,  // Part 2 Episode 12
+              /Part\s*\d+[_\s.-]+(\d{1,3})/i,                                    // Part 2-12 veya Part 2.12
+              /Part\s*\d+\s*[\._](\d{1,3})/i,                                    // Part 2_12 veya Part2.12
+              
+              // Normal bölüm formatları
+              /(?:Episode|Ep|Bölüm|B[oö]l[uü]m)\s*(\d{1,3})/i,                  // Episode 12 veya Bölüm 12
+              /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,                            // _12_ veya _12fin_
+              /[_\s](\d{1,3})$/i,                                               // Sonda numara: _12
+              /\((\d{1,3})\)/,                                                   // Parantez içinde: (12)
+              /[\[（【](\d{1,3})[\]）】]/,                                        // Farklı parantezler: [12] （12） 【12】
+              /[-_\s.](\d{1,3})[-_\s.]/                                         // Genel ayraçlar: -12- _12_ .12.
             ];
 
             for (const pattern of patterns) {
               const match = filename.match(pattern);
               if (match) {
-                return parseInt(match[1]);
+                // Part X Episode Y formatı için son grup numarasını al
+                const episodeNumber = parseInt(match[match.length - 1]);
+                return episodeNumber;
               }
             }
             return 999999;
@@ -1138,24 +1147,33 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
         console.log('Toplam dosya sayısı:', sortedFiles.length);
         sortedFiles.forEach((file, index) => {
           const patterns = [
+            // Part X formatları
+            /Part\s*(\d+)\s*(?:Episode|Ep|Bölüm|B[oö]l[uü]m)?\s*(\d{1,3})/i,
+            /Part\s*\d+[_\s.-]+(\d{1,3})/i,
+            /Part\s*\d+\s*[\._](\d{1,3})/i,
+            
+            // Normal bölüm formatları
+            /(?:Episode|Ep|Bölüm|B[oö]l[uü]m)\s*(\d{1,3})/i,
             /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,
             /[_\s](\d{1,3})$/i,
             /\((\d{1,3})\)/,
-            /Part\s*\d+\s*[\._](\d{1,3})[_\s.]/i,
-            /Part\s*\d+\s*[_\s.](\d{1,3})/i
+            /[\[（【](\d{1,3})[\]）】]/,
+            /[-_\s.](\d{1,3})[-_\s.]/
           ];
 
           let episodeNumber = null;
           for (const pattern of patterns) {
             const match = file.name.match(pattern);
             if (match) {
-              episodeNumber = parseInt(match[1]);
+              episodeNumber = parseInt(match[match.length - 1]);
               break;
             }
           }
 
           const isFinal = /fin|final/i.test(file.name) ? ' (Final)' : '';
-          console.log(`${index + 1}. ${file.name} (Bölüm: ${episodeNumber || 'Belirsiz'}${isFinal}) (${Math.round(file.size / 1024 / 1024)}MB)`);
+          const partMatch = file.name.match(/Part\s*(\d+)/i);
+          const partInfo = partMatch ? ` (Part ${partMatch[1]})` : '';
+          console.log(`${index + 1}. ${file.name} (Bölüm: ${episodeNumber || 'Belirsiz'}${partInfo}${isFinal}) (${Math.round(file.size / 1024 / 1024)}MB)`);
         });
 
         if (!sortedFiles.length) {
@@ -1200,23 +1218,32 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
               try {
                 // Dosya adından bölüm numarasını çıkar
                 const patterns = [
+                  // Part X formatları
+                  /Part\s*(\d+)\s*(?:Episode|Ep|Bölüm|B[oö]l[uü]m)?\s*(\d{1,3})/i,
+                  /Part\s*\d+[_\s.-]+(\d{1,3})/i,
+                  /Part\s*\d+\s*[\._](\d{1,3})/i,
+                  
+                  // Normal bölüm formatları
+                  /(?:Episode|Ep|Bölüm|B[oö]l[uü]m)\s*(\d{1,3})/i,
                   /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,
                   /[_\s](\d{1,3})$/i,
                   /\((\d{1,3})\)/,
-                  /Part\s*\d+\s*[\._](\d{1,3})[_\s.]/i,
-                  /Part\s*\d+\s*[_\s.](\d{1,3})/i
+                  /[\[（【](\d{1,3})[\]）】]/,
+                  /[-_\s.](\d{1,3})[-_\s.]/
                 ];
 
                 let episodeNumber = null;
                 for (const pattern of patterns) {
                   const match = file.name.match(pattern);
                   if (match) {
-                    episodeNumber = parseInt(match[1]);
+                    episodeNumber = parseInt(match[match.length - 1]);
                     break;
                   }
                 }
 
                 const isFinal = /fin|final/i.test(file.name);
+                const partMatch = file.name.match(/Part\s*(\d+)/i);
+                const partInfo = partMatch ? ` (Part ${partMatch[1]})` : '';
 
                 if (!episodeNumber || episodeNumber > 999) {
                   console.log('❌ Geçerli bölüm numarası bulunamadı, atlanıyor');
