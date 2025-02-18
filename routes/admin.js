@@ -1121,12 +1121,14 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
               /Part\s*\d+[_\s.-]+(\d{1,3})/i,                                    // Part 2-12 veya Part 2.12
               /Part\s*\d+\s*[\._](\d{1,3})/i,                                    // Part 2_12 veya Part2.12
               
+              // Parantez formatları
+              /\((\d{1,3})(?:fin|final)?\)/i,                                    // (12) veya (12fin)
+              /[\[（【](\d{1,3})(?:fin|final)?[\]）】]/i,                         // [12] veya [12fin]
+              
               // Normal bölüm formatları
               /(?:Episode|Ep|Bölüm|B[oö]l[uü]m)\s*(\d{1,3})/i,                  // Episode 12 veya Bölüm 12
               /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,                            // _12_ veya _12fin_
               /[_\s](\d{1,3})$/i,                                               // Sonda numara: _12
-              /\((\d{1,3})\)/,                                                   // Parantez içinde: (12)
-              /[\[（【](\d{1,3})[\]）】]/,                                        // Farklı parantezler: [12] （12） 【12】
               /[-_\s.](\d{1,3})[-_\s.]/                                         // Genel ayraçlar: -12- _12_ .12.
             ];
 
@@ -1152,12 +1154,14 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
             /Part\s*\d+[_\s.-]+(\d{1,3})/i,
             /Part\s*\d+\s*[\._](\d{1,3})/i,
             
+            // Parantez formatları
+            /\((\d{1,3})(?:fin|final)?\)/i,
+            /[\[（【](\d{1,3})(?:fin|final)?[\]）】]/i,
+            
             // Normal bölüm formatları
             /(?:Episode|Ep|Bölüm|B[oö]l[uü]m)\s*(\d{1,3})/i,
             /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,
             /[_\s](\d{1,3})$/i,
-            /\((\d{1,3})\)/,
-            /[\[（【](\d{1,3})[\]）】]/,
             /[-_\s.](\d{1,3})[-_\s.]/
           ];
 
@@ -1223,12 +1227,14 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
                   /Part\s*\d+[_\s.-]+(\d{1,3})/i,
                   /Part\s*\d+\s*[\._](\d{1,3})/i,
                   
+                  // Parantez formatları
+                  /\((\d{1,3})(?:fin|final)?\)/i,
+                  /[\[（【](\d{1,3})(?:fin|final)?[\]）】]/i,
+                  
                   // Normal bölüm formatları
                   /(?:Episode|Ep|Bölüm|B[oö]l[uü]m)\s*(\d{1,3})/i,
                   /[_\s](\d{1,3})(?:fin|final)?[_\s.]/i,
                   /[_\s](\d{1,3})$/i,
-                  /\((\d{1,3})\)/,
-                  /[\[（【](\d{1,3})[\]）】]/,
                   /[-_\s.](\d{1,3})[-_\s.]/
                 ];
 
