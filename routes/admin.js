@@ -1025,7 +1025,7 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
           return res.status(400).json({ message: 'Geçersiz klasör ID\'si - Bu bir klasör değil' });
         }
 
-        // Dosyaları listele
+        // Dosyaları listele ve sırala
         const files = await drive.files.list({
           q: `'${cleanFolderId}' in parents and (mimeType contains 'video/' or name contains '.mp4' or name contains '.mkv')`,
           fields: 'files(id, name, size, mimeType)',
@@ -1035,13 +1035,24 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
           includeItemsFromAllDrives: true
         });
 
-        console.log('\n=== BULUNAN DOSYALAR ===');
-        console.log('Toplam dosya sayısı:', files.data.files.length);
-        files.data.files.forEach((file, index) => {
-          console.log(`${index + 1}. ${file.name} (${Math.round(file.size / 1024 / 1024)}MB)`);
+        // Dosyaları bölüm numarasına göre sırala
+        const sortedFiles = files.data.files.sort((a, b) => {
+          const getEpisodeNumber = (filename) => {
+            const match = filename.match(/[_\s(](\d{1,3})[_\s.)]/) || filename.match(/\((\d{1,3})\)/);
+            return match ? parseInt(match[1]) : 999999;
+          };
+          return getEpisodeNumber(a.name) - getEpisodeNumber(b.name);
         });
 
-        if (!files.data.files.length) {
+        console.log('\n=== BULUNAN DOSYALAR (SIRALI) ===');
+        console.log('Toplam dosya sayısı:', sortedFiles.length);
+        sortedFiles.forEach((file, index) => {
+          const episodeMatch = file.name.match(/[_\s(](\d{1,3})[_\s.)]/) || file.name.match(/\((\d{1,3})\)/);
+          const episodeNumber = episodeMatch ? parseInt(episodeMatch[1]) : null;
+          console.log(`${index + 1}. ${file.name} (Bölüm: ${episodeNumber || 'Belirsiz'}) (${Math.round(file.size / 1024 / 1024)}MB)`);
+        });
+
+        if (!sortedFiles.length) {
           return res.status(404).json({ 
             message: 'Klasörde video dosyası bulunamadı',
             totalFiles: 0,
@@ -1052,13 +1063,13 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
         // İşlemi başlat ve hemen yanıt ver
         res.json({ 
           message: 'Bölüm yükleme işlemi başlatıldı',
-          totalFiles: files.data.files.length,
-          files: files.data.files.map(f => f.name)
+          totalFiles: sortedFiles.length,
+          files: sortedFiles.map(f => f.name)
         });
 
         // İstatistik değişkenleri
         let stats = {
-          total: files.data.files.length,
+          total: sortedFiles.length,
           processed: 0,
           successful: 0,
           failed: 0,
@@ -1071,7 +1082,7 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
           try {
             console.log('\n=== YÜKLEME İŞLEMİ BAŞLIYOR ===');
             
-            for (const file of files.data.files) {
+            for (const file of sortedFiles) {
               stats.processed++;
               const progress = ((stats.processed / stats.total) * 100).toFixed(2);
               const elapsedTime = Math.round((Date.now() - stats.startTime) / 1000);
