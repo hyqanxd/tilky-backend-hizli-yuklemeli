@@ -1120,16 +1120,21 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
                     alt: 'media',
                     supportsAllDrives: true
                   },
-                  { responseType: 'stream' }
+                  { 
+                    responseType: 'stream',
+                    headers: {
+                      Range: 'bytes=0-'
+                    }
+                  }
                 );
 
                 // Bunny Storage'a yüklenecek dosya adını oluştur
                 const sanitizedAnimeName = (anime.title || 'anime')
                   .toString()
                   .toLowerCase()
-                  .replace(/[^a-z0-9]/g, '-') // Özel karakterleri tire ile değiştir
-                  .replace(/-+/g, '-') // Ardışık tireleri tekli tireye dönüştür
-                  .replace(/^-|-$/g, ''); // Baştaki ve sondaki tireleri kaldır
+                  .replace(/[^a-z0-9]/g, '-')
+                  .replace(/-+/g, '-')
+                  .replace(/^-|-$/g, '');
 
                 const storageFolder = `${sanitizedAnimeName}/sezon-${seasonNumber}`;
                 const fileName = `${storageFolder}/${episodeNumber}.mp4`;
@@ -1140,19 +1145,55 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
                   const uploadUrl = `https://storage.bunnycdn.com/${process.env.BUNNY_STORAGE_ZONE_NAME}/${fileName}`;
                   
                   await new Promise((resolve, reject) => {
+                    let uploadedBytes = 0;
+                    let lastLogTime = Date.now();
+                    const logInterval = 2000; // Her 2 saniyede bir log
+
                     const uploadStream = axios.put(uploadUrl, driveResponse.data, {
                       headers: {
                         'AccessKey': process.env.BUNNY_STORAGE_API_KEY,
-                        'Content-Type': 'video/mp4'
+                        'Content-Type': 'video/mp4',
+                        'Transfer-Encoding': 'chunked'
                       },
                       maxContentLength: Infinity,
-                      maxBodyLength: Infinity
+                      maxBodyLength: Infinity,
+                      onUploadProgress: (progressEvent) => {
+                        uploadedBytes = progressEvent.loaded;
+                        const currentTime = Date.now();
+                        
+                        // Her 2 saniyede bir log yaz
+                        if (currentTime - lastLogTime >= logInterval) {
+                          const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(2);
+                          const uploadSpeedMBps = ((uploadedBytes / (1024 * 1024)) / ((currentTime - stats.startTime) / 1000)).toFixed(2);
+                          console.log(`📤 Yüklenen: ${uploadedMB} MB (${uploadSpeedMBps} MB/s)`);
+                          lastLogTime = currentTime;
+                        }
+                      }
                     });
 
-                    uploadStream.then(resolve).catch(reject);
+                    // Memory leak'i önlemek için stream'i temizle
+                    driveResponse.data.on('end', () => {
+                      console.log('✅ Drive stream tamamlandı');
+                      driveResponse.data.destroy();
+                    });
+
+                    driveResponse.data.on('error', (error) => {
+                      console.error('❌ Drive stream hatası:', error);
+                      driveResponse.data.destroy();
+                      reject(error);
+                    });
+
+                    uploadStream.then((response) => {
+                      console.log('✅ Bunny upload tamamlandı:', response.status);
+                      resolve();
+                    }).catch((error) => {
+                      console.error('❌ Bunny upload hatası:', error.message);
+                      driveResponse.data.destroy();
+                      reject(error);
+                    });
                   });
 
-                  console.log('✓ Bunny Storage yüklemesi başarılı');
+                  console.log('✅ Yükleme başarıyla tamamlandı');
 
                   // Yeni bölüm oluştur
                   const newEpisode = {
