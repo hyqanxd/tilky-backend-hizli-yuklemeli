@@ -5,9 +5,9 @@
       "src": "index.js",
       "use": "@vercel/node",
       "config": {
-        "maxDuration": 30,
-        "memory": 3008,
-        "maxRequestSize": "50mb"
+        "maxDuration": 60,
+        "memory": 4096,
+        "maxRequestSize": "5gb"
       }
     }
   ],

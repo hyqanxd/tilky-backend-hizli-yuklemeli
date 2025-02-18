@@ -15,9 +15,6 @@ const mangaRoutes = require('./routes/manga');
 
 const app = express();
 
-// Set strictQuery to false to prepare for Mongoose 7
-mongoose.set('strictQuery', false);
-
 // CORS ayarları
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
@@ -34,7 +31,7 @@ app.use((req, res, next) => {
     next();
   } else {
     express.json({ 
-      limit: '100mb',
+      limit: '5gb',
       verify: (req, res, buf) => {
         req.rawBody = buf;
       }
@@ -42,12 +39,12 @@ app.use((req, res, next) => {
   }
 });
 app.use(express.urlencoded({ 
-  limit: '100mb', 
+  limit: '5gb', 
   extended: true,
-  parameterLimit: 100000
+  parameterLimit: 50000000
 }));
 app.use(express.json({
-  limit: '100mb',
+  limit: '5gb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
   }
@@ -139,18 +136,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Port configuration for Railway
 const PORT = process.env.PORT || 5000;
-
-// Update server startup logic
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`Server ${PORT} portunda çalışıyor`);
-  });
-} else {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Production: Server ${PORT} portunda çalışıyor`);
-  });
-}
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT}`);
+});
 
 module.exports = app;

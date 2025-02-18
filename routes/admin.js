@@ -5,6 +5,7 @@ const Admin = require('../models/Admin');
 const User = require('../models/User');
 const BetaSignup = require('../models/BetaSignup');
 const Anime = require('../models/Anime');
+const Fansub = require('../models/Fansub');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/adminAuth');
 const crypto = require('crypto');
@@ -981,170 +982,292 @@ router.delete('/notifications/:id', auth, async (req, res) => {
 });
 
 // Toplu bölüm yükleme endpoint'i
-router.post('/bulk-upload-episodes', auth, adminAuth, async (req, res) => {
+router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
   try {
-    const { animeId, seasonNumber, fansubId, driveUrl } = req.body;
-
-    // Gerekli alanları kontrol et
-    if (!animeId || !seasonNumber || !fansubId || !driveUrl) {
-      return res.status(400).json({ message: 'Tüm alanlar gereklidir' });
-    }
+    const { seasonNumber, folderId, fansub, quality, language, type } = req.body;
 
     // Anime'yi bul
-    const anime = await Anime.findById(animeId);
+    const anime = await Anime.findById(req.params.id);
     if (!anime) {
       return res.status(404).json({ message: 'Anime bulunamadı' });
     }
 
     // Sezonu bul
-    const season = anime.seasons.find(s => s.seasonNumber === seasonNumber);
+    const season = anime.seasons.find(s => s.seasonNumber === parseInt(seasonNumber));
     if (!season) {
       return res.status(404).json({ message: 'Sezon bulunamadı' });
     }
 
-    // Drive klasör ID'sini çıkar
-    const folderId = driveUrl.match(/[-\w]{25,}/)?.[0];
-    if (!folderId) {
-      return res.status(400).json({ message: 'Geçersiz Drive URL' });
-    }
+    // Google Drive klasöründeki dosyaları listele
+    try {
+      console.log('=== TOPLU YÜKLEME BAŞLATILIYOR ===');
+      console.log('Anime:', anime.title);
+      console.log('Sezon:', seasonNumber);
+      console.log('Klasör ID:', folderId);
+      
+      // Drive URL'inden ID'yi çıkar
+      const folderIdMatch = folderId.match(/[-\w]{25,}/);
+      const cleanFolderId = folderIdMatch ? folderIdMatch[0] : folderId;
+      
+      console.log('Temizlenmiş Klasör ID:', cleanFolderId);
 
-    // Drive'dan dosyaları listele
-    console.log('Google Drive klasöründen videolar listeleniyor...');
-    const files = await drive.files.list({
-      q: `'${folderId}' in parents and mimeType contains 'video/'`,
-      fields: 'files(id, name, size)',
-      orderBy: 'name'
-    });
-
-    if (!files.data.files || files.data.files.length === 0) {
-      return res.status(404).json({ message: 'Klasörde video dosyası bulunamadı' });
-    }
-
-    // Dosyaları bölüm numarasına göre sırala
-    const sortedFiles = files.data.files
-      .map(file => ({
-        ...file,
-        episodeNumber: parseInt(file.name.match(/\d+/)?.[0] || '0')
-      }))
-      .sort((a, b) => a.episodeNumber - b.episodeNumber)
-      .filter(file => file.episodeNumber > 0); // Sadece geçerli bölüm numarası olanları al
-
-    console.log(`\nToplam ${sortedFiles.length} video dosyası bulundu ve sıralandı.`);
-    console.log('Bölümler sırayla yüklenecek...\n');
-
-    const results = [];
-    
-    // Dosyaları sırayla işle
-    for (const file of sortedFiles) {
       try {
-        const episodeNumber = file.episodeNumber;
-        console.log(`\n[${sortedFiles.indexOf(file) + 1}/${sortedFiles.length}] Bölüm ${episodeNumber} işleniyor...`);
-        console.log(`Dosya: ${file.name}`);
-        console.log(`Boyut: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+        // Önce klasörün varlığını kontrol et
+        const folder = await drive.files.get({
+          fileId: cleanFolderId,
+          fields: 'id, name, mimeType',
+          supportsAllDrives: true
+        });
+        
+        console.log('Klasör bilgisi:', folder.data);
 
-        // Bunny Storage için benzersiz dosya adı oluştur
-        const fileName = `videos/${anime._id}_s${seasonNumber}_e${episodeNumber}_${Date.now()}.mp4`;
-        console.log('Hedef dosya adı:', fileName);
-
-        // Drive'dan dosyayı indir ve doğrudan Bunny Storage'a aktar
-        console.log('Google Drive\'dan indiriliyor ve Bunny Storage\'a yükleniyor...');
-        const fileStream = await drive.files.get({
-          fileId: file.id,
-          alt: 'media'
-        }, { responseType: 'stream' });
-
-        const uploadResult = await uploadToBunnyStorage(fileStream.data, fileName);
-
-        if (!uploadResult || !uploadResult.url) {
-          throw new Error('Bunny Storage yükleme başarısız');
+        if (folder.data.mimeType !== 'application/vnd.google-apps.folder') {
+          return res.status(400).json({ message: 'Geçersiz klasör ID\'si - Bu bir klasör değil' });
         }
 
-        console.log('Video başarıyla yüklendi');
-        console.log('CDN URL:', uploadResult.url);
+        // Dosyaları listele
+        const files = await drive.files.list({
+          q: `'${cleanFolderId}' in parents and (mimeType contains 'video/' or name contains '.mp4' or name contains '.mkv')`,
+          fields: 'files(id, name, size, mimeType)',
+          orderBy: 'name',
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true
+        });
 
-        // Bölüm verilerini hazırla ve ekle
-        const episodeData = {
-          episodeNumber,
-          title: `Bölüm ${episodeNumber}`,
-          description: `${anime.title.romaji || anime.title.english} ${episodeNumber}. Bölüm`,
-          thumbnail: anime.coverImage,
-          duration: '24',
-          seasonNumber,
-          videoSources: [{
-            quality: '1080p',
-            language: 'TR',
-            type: 'Altyazılı',
-            url: uploadResult.url,
-            source: 'bunny',
-            fansub: fansubId,
-            sourceId: `bunny-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          }]
+        console.log('\n=== BULUNAN DOSYALAR ===');
+        console.log('Toplam dosya sayısı:', files.data.files.length);
+        files.data.files.forEach((file, index) => {
+          console.log(`${index + 1}. ${file.name} (${Math.round(file.size / 1024 / 1024)}MB)`);
+        });
+
+        if (!files.data.files.length) {
+          return res.status(404).json({ 
+            message: 'Klasörde video dosyası bulunamadı',
+            totalFiles: 0,
+            tip: 'Lütfen klasörün ve dosyaların erişilebilir olduğundan emin olun.'
+          });
+        }
+
+        // İşlemi başlat ve hemen yanıt ver
+        res.json({ 
+          message: 'Bölüm yükleme işlemi başlatıldı',
+          totalFiles: files.data.files.length,
+          files: files.data.files.map(f => f.name)
+        });
+
+        // İstatistik değişkenleri
+        let stats = {
+          total: files.data.files.length,
+          processed: 0,
+          successful: 0,
+          failed: 0,
+          skipped: 0,
+          startTime: Date.now()
         };
 
-        const existingEpisodeIndex = season.episodes.findIndex(e => e.episodeNumber === episodeNumber);
-        if (existingEpisodeIndex > -1) {
-          season.episodes[existingEpisodeIndex] = {
-            ...season.episodes[existingEpisodeIndex],
-            ...episodeData
-          };
-        } else {
-          season.episodes.push(episodeData);
-        }
+        // Arka planda işleme devam et
+        (async () => {
+          try {
+            console.log('\n=== YÜKLEME İŞLEMİ BAŞLIYOR ===');
+            
+            for (const file of files.data.files) {
+              stats.processed++;
+              const progress = ((stats.processed / stats.total) * 100).toFixed(2);
+              const elapsedTime = Math.round((Date.now() - stats.startTime) / 1000);
+              
+              console.log(`\n--- Dosya ${stats.processed}/${stats.total} (${progress}%) ---`);
+              console.log('İşlem süresi:', elapsedTime, 'saniye');
+              console.log('Dosya:', file.name);
 
-        // Her bölüm sonrası veritabanını güncelle
-        await anime.save();
-        console.log(`Bölüm ${episodeNumber} başarıyla eklendi ve kaydedildi\n`);
-        
-        results.push({
-          success: true,
-          episodeNumber,
-          url: uploadResult.url,
-          fileName: file.name,
-          fileSize: file.size,
-          uploadTime: new Date().toISOString()
-        });
+              try {
+                // Dosya adından bölüm numarasını çıkar
+                const episodeNumber = parseInt(file.name.match(/\d+/)?.[0]);
+                if (!episodeNumber) {
+                  console.log('❌ Bölüm numarası bulunamadı, atlanıyor');
+                  stats.skipped++;
+                  continue;
+                }
+
+                // Bölüm zaten var mı kontrol et
+                const existingEpisode = season.episodes.find(e => e.episodeNumber === episodeNumber);
+                if (existingEpisode) {
+                  console.log(`⚠️ Bölüm ${episodeNumber} zaten mevcut, atlanıyor`);
+                  stats.skipped++;
+                  continue;
+                }
+
+                // Dosyaya erişim kontrolü
+                try {
+                  await drive.files.get({
+                    fileId: file.id,
+                    fields: 'id',
+                    supportsAllDrives: true
+                  });
+                } catch (error) {
+                  console.error(`❌ Dosyaya erişim hatası (Bölüm ${episodeNumber}):`, error.message);
+                  stats.failed++;
+                  continue;
+                }
+
+                console.log('✓ Google Drive erişimi başarılı');
+                console.log('⏳ Drive\'dan indiriliyor...');
+
+                // Google Drive'dan dosyayı stream olarak al
+                const driveResponse = await drive.files.get(
+                  { 
+                    fileId: file.id, 
+                    alt: 'media',
+                    supportsAllDrives: true
+                  },
+                  { responseType: 'stream' }
+                );
+
+                // Bunny Storage'a yüklenecek dosya adını oluştur
+                const sanitizedAnimeName = (anime.title || 'anime')
+                  .toString()
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]/g, '-') // Özel karakterleri tire ile değiştir
+                  .replace(/-+/g, '-') // Ardışık tireleri tekli tireye dönüştür
+                  .replace(/^-|-$/g, ''); // Baştaki ve sondaki tireleri kaldır
+
+                const storageFolder = `${sanitizedAnimeName}/sezon-${seasonNumber}`;
+                const fileName = `${storageFolder}/${episodeNumber}.mp4`;
+                console.log('⏳ Bunny Storage\'a yükleniyor:', fileName);
+
+                try {
+                  // Bunny Storage'a doğrudan stream ile yükle
+                  const uploadUrl = `https://storage.bunnycdn.com/${process.env.BUNNY_STORAGE_ZONE_NAME}/${fileName}`;
+                  
+                  await new Promise((resolve, reject) => {
+                    const uploadStream = axios.put(uploadUrl, driveResponse.data, {
+                      headers: {
+                        'AccessKey': process.env.BUNNY_STORAGE_API_KEY,
+                        'Content-Type': 'video/mp4'
+                      },
+                      maxContentLength: Infinity,
+                      maxBodyLength: Infinity
+                    });
+
+                    uploadStream.then(resolve).catch(reject);
+                  });
+
+                  console.log('✓ Bunny Storage yüklemesi başarılı');
+
+                  // Yeni bölüm oluştur
+                  const newEpisode = {
+                    episodeNumber,
+                    title: `Bölüm ${episodeNumber}`,
+                    description: `${anime.title} ${episodeNumber}. Bölüm`,
+                    thumbnail: anime.coverImage,
+                    duration: '',
+                    seasonNumber: parseInt(seasonNumber),
+                    status: 'published',
+                    publishedAt: new Date(),
+                    order: episodeNumber,
+                    videoSources: [{
+                      quality,
+                      language,
+                      type,
+                      url: `https://${process.env.BUNNY_STORAGE_ZONE_NAME}.b-cdn.net/${fileName}`,
+                      source: 'bunny',
+                      fansub,
+                      status: 'active'
+                    }]
+                  };
+
+                  // Bölümü sezona ekle ve sırala
+                  season.episodes.push(newEpisode);
+                  season.episodes.sort((a, b) => a.order - b.order); // Bölümleri sırala
+                  stats.successful++;
+                  
+                  // Her başarılı bölüm sonrası değişiklikleri kaydet
+                  await anime.save();
+                  
+                  console.log('✓ Bölüm veritabanına eklendi');
+                  console.log('✓ Bölüm yayına alındı');
+                  console.log('✅ Bölüm işlemi başarıyla tamamlandı');
+
+                } catch (uploadError) {
+                  console.error('❌ Bunny Storage yükleme hatası:', uploadError.message);
+                  stats.failed++;
+                  continue;
+                }
+
+              } catch (fileError) {
+                console.error('❌ Dosya işleme hatası:', fileError.message);
+                stats.failed++;
+                continue;
+              }
+
+              // İstatistikleri göster
+              console.log('\n--- GÜNCEL İSTATİSTİKLER ---');
+              console.log(`Toplam: ${stats.total}`);
+              console.log(`İşlenen: ${stats.processed} (${((stats.processed / stats.total) * 100).toFixed(2)}%)`);
+              console.log(`Başarılı: ${stats.successful}`);
+              console.log(`Başarısız: ${stats.failed}`);
+              console.log(`Atlanan: ${stats.skipped}`);
+              console.log(`Geçen süre: ${Math.round((Date.now() - stats.startTime) / 1000)} saniye`);
+            }
+
+            // Değişiklikleri kaydet
+            await anime.save();
+            const totalTime = Math.round((Date.now() - stats.startTime) / 1000);
+            
+            console.log('\n=== TOPLU YÜKLEME TAMAMLANDI ===');
+            console.log('Anime:', anime.title);
+            console.log('Sezon:', seasonNumber);
+            console.log('Toplam süre:', totalTime, 'saniye');
+            console.log('Toplam dosya:', stats.total);
+            console.log('Başarılı:', stats.successful);
+            console.log('Başarısız:', stats.failed);
+            console.log('Atlanan:', stats.skipped);
+            console.log('Ortalama süre:', (totalTime / stats.total).toFixed(2), 'saniye/dosya');
+            console.log('================================\n');
+
+          } catch (error) {
+            console.error('\n❌ TOPLU YÜKLEME HATASI:', error.message);
+            console.error('İşlem yarıda kesildi');
+            console.log('--- SON İSTATİSTİKLER ---');
+            console.log(`Toplam: ${stats.total}`);
+            console.log(`İşlenen: ${stats.processed}`);
+            console.log(`Başarılı: ${stats.successful}`);
+            console.log(`Başarısız: ${stats.failed}`);
+            console.log(`Atlanan: ${stats.skipped}`);
+            console.log('========================\n');
+          }
+        })();
 
       } catch (error) {
-        console.error(`\nBölüm ${file.name} yükleme hatası:`, error);
-        results.push({
-          success: false,
-          episodeNumber: file.episodeNumber,
-          fileName: file.name,
-          error: error.message,
-          uploadTime: new Date().toISOString()
-        });
+        if (error.code === 404) {
+          console.error('❌ Klasör bulunamadı veya erişim izni yok');
+          return res.status(404).json({ message: 'Klasör bulunamadı veya erişim izniniz yok' });
+        }
+        throw error;
       }
+
+    } catch (error) {
+      console.error('❌ Toplu yükleme hatası:', error.message);
+      res.status(500).json({ 
+        message: 'Bölümler yüklenirken bir hata oluştu',
+        error: error.message
+      });
     }
 
-    const successCount = results.filter(r => r.success).length;
-    const failCount = results.filter(r => !r.success).length;
-
-    console.log('\nTüm yüklemeler tamamlandı!');
-    console.log(`Başarılı: ${successCount}`);
-    console.log(`Başarısız: ${failCount}`);
-
-    res.json({
-      message: 'Bölümler yüklendi',
-      results,
-      successCount,
-      failCount,
-      uploadedEpisodes: results.filter(r => r.success).map(r => ({
-        episodeNumber: r.episodeNumber,
-        url: r.url,
-        fileName: r.fileName,
-        fileSize: r.fileSize,
-        uploadTime: r.uploadTime
-      })),
-      failedEpisodes: results.filter(r => !r.success).map(r => ({
-        fileName: r.episodeNumber,
-        error: r.error,
-        uploadTime: r.uploadTime
-      }))
-    });
-
   } catch (error) {
-    console.error('Toplu bölüm yükleme hatası:', error);
-    res.status(500).json({ message: 'Bölümler yüklenirken bir hata oluştu', error: error.message });
+    console.error('❌ Toplu yükleme hatası:', error.message);
+    res.status(500).json({ message: 'Bölümler yüklenirken bir hata oluştu' });
+  }
+});
+
+// Fansub listesini getir
+router.get('/fansubs', [auth, adminAuth], async (req, res) => {
+  try {
+    const fansubs = await Fansub.find().sort({ name: 1 });
+    res.json(fansubs);
+  } catch (error) {
+    console.error('Fansub listesi getirme hatası:', error);
+    res.status(500).json({ message: 'Fansub listesi alınırken bir hata oluştu' });
   }
 });
 

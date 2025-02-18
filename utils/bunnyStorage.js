@@ -1,34 +1,26 @@
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-const { Readable } = require('stream');
 
 const BUNNY_STORAGE_API_KEY = process.env.BUNNY_STORAGE_API_KEY;
 const BUNNY_STORAGE_ZONE_NAME = process.env.BUNNY_STORAGE_ZONE_NAME;
 
-const uploadToBunnyStorage = async (fileStream, fileName) => {
+const uploadToBunnyStorage = async (filePath, fileName) => {
   try {
     if (!process.env.BUNNY_STORAGE_API_KEY || !process.env.BUNNY_STORAGE_ZONE_NAME) {
       throw new Error('Bunny Storage yapılandırması eksik');
     }
 
-    // Stream'i buffer'a dönüştür
-    const chunks = [];
-    for await (const chunk of fileStream) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
+    const fileBuffer = fs.readFileSync(filePath);
 
     const response = await axios.put(
       `https://storage.bunnycdn.com/${process.env.BUNNY_STORAGE_ZONE_NAME}/${fileName}`,
-      buffer,
+      fileBuffer,
       {
         headers: {
           'AccessKey': process.env.BUNNY_STORAGE_API_KEY,
           'Content-Type': 'application/octet-stream'
-        },
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity
+        }
       }
     );
 

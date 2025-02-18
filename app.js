@@ -21,25 +21,11 @@ app.use((req, res, next) => {
   if (req.originalUrl === '/api/donation/webhook') {
     next();
   } else {
-    express.json({ 
-      limit: '100mb',
-      verify: (req, res, buf) => {
-        req.rawBody = buf;
-      }
-    })(req, res, next);
+    express.json({ limit: '20mb' })(req, res, next);
   }
 });
-app.use(express.urlencoded({ 
-  limit: '100mb', 
-  extended: true,
-  parameterLimit: 100000
-}));
-app.use(express.json({
-  limit: '100mb',
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(bodyParser.urlencoded({ extended: true, limit: '20mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 // Route'ları içe aktar
 const adminRoutes = require('./routes/admin');
