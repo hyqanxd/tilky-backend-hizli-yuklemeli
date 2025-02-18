@@ -15,6 +15,9 @@ const mangaRoutes = require('./routes/manga');
 
 const app = express();
 
+// Set strictQuery to false to prepare for Mongoose 7
+mongoose.set('strictQuery', false);
+
 // CORS ayarları
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
@@ -136,11 +139,17 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Vercel için module.exports
+// Port configuration for Railway
+const PORT = process.env.PORT || 5000;
+
+// Update server startup logic
 if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
     console.log(`Server ${PORT} portunda çalışıyor`);
+  });
+} else {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Production: Server ${PORT} portunda çalışıyor`);
   });
 }
 
