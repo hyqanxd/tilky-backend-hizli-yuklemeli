@@ -1120,16 +1120,21 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
                     alt: 'media',
                     supportsAllDrives: true
                   },
-                  { responseType: 'stream' }
+                  { 
+                    responseType: 'stream',
+                    headers: {
+                      Range: 'bytes=0-'
+                    }
+                  }
                 );
 
                 // Bunny Storage'a yüklenecek dosya adını oluştur
                 const sanitizedAnimeName = (anime.title || 'anime')
                   .toString()
                   .toLowerCase()
-                  .replace(/[^a-z0-9]/g, '-') // Özel karakterleri tire ile değiştir
-                  .replace(/-+/g, '-') // Ardışık tireleri tekli tireye dönüştür
-                  .replace(/^-|-$/g, ''); // Baştaki ve sondaki tireleri kaldır
+                  .replace(/[^a-z0-9]/g, '-')
+                  .replace(/-+/g, '-')
+                  .replace(/^-|-$/g, '');
 
                 const storageFolder = `${sanitizedAnimeName}/sezon-${seasonNumber}`;
                 const fileName = `${storageFolder}/${episodeNumber}.mp4`;
@@ -1140,16 +1145,30 @@ router.post('/animes/:id/bulk-upload', auth, adminAuth, async (req, res) => {
                   const uploadUrl = `https://storage.bunnycdn.com/${process.env.BUNNY_STORAGE_ZONE_NAME}/${fileName}`;
                   
                   await new Promise((resolve, reject) => {
+                    let uploadedBytes = 0;
                     const uploadStream = axios.put(uploadUrl, driveResponse.data, {
                       headers: {
                         'AccessKey': process.env.BUNNY_STORAGE_API_KEY,
-                        'Content-Type': 'video/mp4'
+                        'Content-Type': 'video/mp4',
+                        'Transfer-Encoding': 'chunked'
                       },
                       maxContentLength: Infinity,
-                      maxBodyLength: Infinity
+                      maxBodyLength: Infinity,
+                      onUploadProgress: (progressEvent) => {
+                        uploadedBytes = progressEvent.loaded;
+                        console.log(`Yüklenen: ${(uploadedBytes / (1024 * 1024)).toFixed(2)} MB`);
+                      }
                     });
 
-                    uploadStream.then(resolve).catch(reject);
+                    // Memory leak'i önlemek için stream'i temizle
+                    driveResponse.data.on('end', () => {
+                      driveResponse.data.destroy();
+                    });
+
+                    uploadStream.then(resolve).catch((error) => {
+                      driveResponse.data.destroy();
+                      reject(error);
+                    });
                   });
 
                   console.log('✓ Bunny Storage yüklemesi başarılı');

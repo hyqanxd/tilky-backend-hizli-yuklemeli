@@ -15,6 +15,36 @@ const mangaRoutes = require('./routes/manga');
 
 const app = express();
 
+// Memory optimization
+const v8 = require('v8');
+const totalHeapSize = v8.getHeapStatistics().total_available_size;
+const totalHeapSizeInGB = (totalHeapSize / 1024 / 1024 / 1024).toFixed(2);
+console.log(`Total heap size (GB) = ${totalHeapSizeInGB}`);
+
+// Timeout ayarları
+app.use((req, res, next) => {
+  // 10 dakika timeout
+  req.setTimeout(600000);
+  res.setTimeout(600000);
+  next();
+});
+
+// Body parser limitleri
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Garbage collection için interval
+setInterval(() => {
+  try {
+    if (global.gc) {
+      global.gc();
+      console.log('Garbage collection completed');
+    }
+  } catch (e) {
+    console.log('Garbage collection failed:', e);
+  }
+}, 30000); // Her 30 saniyede bir
+
 // CORS ayarları
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
