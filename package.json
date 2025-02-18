@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "build": "npm install",
+    "build": "npm install && npm run vercel-build",
     "vercel-build": "echo 'Vercel build step...'"
   },
   "dependencies": {
