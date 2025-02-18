@@ -552,30 +552,106 @@ router.post('/upload-video', upload.single('video'), async (req, res) => {
       return res.status(400).json({ message: 'Sadece video dosyaları yüklenebilir' });
     }
 
+    console.log('\n=== TEKLİ VIDEO YÜKLEME BAŞLIYOR ===');
+    console.log('Dosya:', req.file.originalname);
+    console.log('Boyut:', (req.file.size / (1024 * 1024)).toFixed(2), 'MB');
+    console.log('Tip:', req.file.mimetype);
+
     // Benzersiz dosya adı oluştur
     const fileName = `videos/${Date.now()}-${path.basename(req.file.originalname)}`;
+    console.log('Hedef dosya adı:', fileName);
 
     try {
-      // Bunny Storage'a yükle
-      const uploadResult = await uploadToBunnyStorage(req.file.path, fileName);
+      console.log('\n⏳ Bunny Storage\'a yükleniyor...');
+      const startTime = Date.now();
+
+      // Dosyayı stream olarak oku
+      const fileStream = fs.createReadStream(req.file.path);
+      const uploadUrl = `https://storage.bunnycdn.com/${process.env.BUNNY_STORAGE_ZONE_NAME}/${fileName}`;
+
+      // Upload işlemi
+      await new Promise((resolve, reject) => {
+        let uploadedBytes = 0;
+        let lastLogTime = Date.now();
+        const logInterval = 2000; // Her 2 saniyede bir log
+
+        const uploadStream = axios.put(uploadUrl, fileStream, {
+          headers: {
+            'AccessKey': process.env.BUNNY_STORAGE_API_KEY,
+            'Content-Type': 'video/mp4',
+            'Transfer-Encoding': 'chunked'
+          },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          onUploadProgress: (progressEvent) => {
+            uploadedBytes = progressEvent.loaded;
+            const currentTime = Date.now();
+            
+            // Her 2 saniyede bir log yaz
+            if (currentTime - lastLogTime >= logInterval) {
+              const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(2);
+              const totalMB = (req.file.size / (1024 * 1024)).toFixed(2);
+              const progress = ((uploadedBytes / req.file.size) * 100).toFixed(2);
+              const uploadSpeedMBps = ((uploadedBytes / (1024 * 1024)) / ((currentTime - startTime) / 1000)).toFixed(2);
+              console.log(`📤 Yüklenen: ${uploadedMB}/${totalMB} MB (${progress}%) - Hız: ${uploadSpeedMBps} MB/s`);
+              lastLogTime = currentTime;
+            }
+          }
+        });
+
+        // Stream hata yönetimi
+        fileStream.on('error', (error) => {
+          console.error('❌ Dosya okuma hatası:', error);
+          fileStream.destroy();
+          reject(error);
+        });
+
+        fileStream.on('end', () => {
+          console.log('✅ Dosya okuma tamamlandı');
+          fileStream.destroy();
+        });
+
+        uploadStream.then((response) => {
+          const endTime = Date.now();
+          const totalTime = ((endTime - startTime) / 1000).toFixed(2);
+          const averageSpeed = ((req.file.size / (1024 * 1024)) / totalTime).toFixed(2);
+          
+          console.log('\n=== YÜKLEME TAMAMLANDI ===');
+          console.log('Toplam süre:', totalTime, 'saniye');
+          console.log('Ortalama hız:', averageSpeed, 'MB/s');
+          console.log('Durum kodu:', response.status);
+          resolve();
+        }).catch((error) => {
+          console.error('❌ Bunny upload hatası:', error.message);
+          reject(error);
+        });
+      });
 
       // Geçici dosyayı sil
       fs.unlinkSync(req.file.path);
+      console.log('✓ Geçici dosya temizlendi');
+
+      // CDN URL'ini oluştur
+      const cdnUrl = `https://${process.env.BUNNY_STORAGE_ZONE_NAME}.b-cdn.net/${fileName}`;
+      console.log('✓ CDN URL:', cdnUrl);
 
       res.json({
-        url: uploadResult.url,
+        url: cdnUrl,
         source: 'bunny',
         message: 'Video başarıyla yüklendi'
       });
-    } catch (error) {
+
+    } catch (uploadError) {
       // Hata durumunda geçici dosyayı sil
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
+        console.log('✓ Hata sonrası geçici dosya temizlendi');
       }
-      throw error;
+      throw uploadError;
     }
+
   } catch (error) {
-    console.error('Video yükleme hatası:', error);
+    console.error('\n❌ YÜKLEME HATASI:', error.message);
     res.status(500).json({ 
       message: error.message || 'Video yüklenirken bir hata oluştu'
     });
