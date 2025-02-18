@@ -375,9 +375,18 @@ router.patch('/profile/username', auth, async (req, res) => {
 
     const user = await User.findByIdAndUpdate(
       req.user.id,
-      { username: username.toLowerCase() }, // Kullanıcı adını küçük harfe çevir
+      { username: username.toLowerCase() },
       { new: true }
-    ).select('-password');
+    )
+    .select('-password')
+    .populate('watchList')
+    .populate('favorites')
+    .populate({
+      path: 'watchHistory',
+      populate: {
+        path: 'anime'
+      }
+    });
 
     const token = jwt.sign(
       { id: user._id, role: user.role },
