@@ -565,68 +565,71 @@ router.post('/upload-video', upload.single('video'), async (req, res) => {
       console.log('\n⏳ Bunny Storage\'a yükleniyor...');
       const startTime = Date.now();
 
-      // Dosyayı chunk'lara böl
-      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
-      const totalChunks = Math.ceil(req.file.size / CHUNK_SIZE);
-      const chunks = [];
-
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, req.file.size);
-        chunks.push({ start, end });
-      }
-
-      // Paralel yükleme için Promise.all kullan
+      // Dosyayı stream olarak oku
+      const fileStream = fs.createReadStream(req.file.path);
       const uploadUrl = `https://storage.bunnycdn.com/${process.env.BUNNY_STORAGE_ZONE_NAME}/${fileName}`;
-      let totalUploadedBytes = 0;
-      let lastLogTime = Date.now();
-      const logInterval = 1000; // Her 1 saniyede bir log
 
-      // Chunk'ları paralel olarak yükle
-      await Promise.all(chunks.map(async (chunk, index) => {
-        const chunkStream = fs.createReadStream(req.file.path, { start: chunk.start, end: chunk.end - 1 });
-        
-        await axios.put(`${uploadUrl}?chunk=${index}`, chunkStream, {
+      // Upload işlemi
+      await new Promise((resolve, reject) => {
+        let uploadedBytes = 0;
+        let lastLogTime = Date.now();
+        const logInterval = 2000; // Her 2 saniyede bir log
+
+        const uploadStream = axios.put(uploadUrl, fileStream, {
           headers: {
             'AccessKey': process.env.BUNNY_STORAGE_API_KEY,
-            'Content-Type': 'application/octet-stream',
-            'Content-Range': `bytes ${chunk.start}-${chunk.end - 1}/${req.file.size}`
+            'Content-Type': 'video/mp4',
+            'Transfer-Encoding': 'chunked'
           },
           maxContentLength: Infinity,
-          maxBodyLength: Infinity
+          maxBodyLength: Infinity,
+          onUploadProgress: (progressEvent) => {
+            uploadedBytes = progressEvent.loaded;
+            const currentTime = Date.now();
+            
+            // Her 2 saniyede bir log yaz
+            if (currentTime - lastLogTime >= logInterval) {
+              const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(2);
+              const totalMB = (req.file.size / (1024 * 1024)).toFixed(2);
+              const progress = ((uploadedBytes / req.file.size) * 100).toFixed(2);
+              const uploadSpeedMBps = ((uploadedBytes / (1024 * 1024)) / ((currentTime - startTime) / 1000)).toFixed(2);
+              console.log(`📤 Yüklenen: ${uploadedMB}/${totalMB} MB (${progress}%) - Hız: ${uploadSpeedMBps} MB/s`);
+              lastLogTime = currentTime;
+            }
+          }
         });
 
-        totalUploadedBytes += (chunk.end - chunk.start);
-        const currentTime = Date.now();
+        // Stream hata yönetimi
+        fileStream.on('error', (error) => {
+          console.error('❌ Dosya okuma hatası:', error);
+          fileStream.destroy();
+          reject(error);
+        });
 
-        if (currentTime - lastLogTime >= logInterval) {
-          const uploadedMB = (totalUploadedBytes / (1024 * 1024)).toFixed(2);
-          const totalMB = (req.file.size / (1024 * 1024)).toFixed(2);
-          const progress = ((totalUploadedBytes / req.file.size) * 100).toFixed(2);
-          const uploadSpeedMBps = ((totalUploadedBytes / (1024 * 1024)) / ((currentTime - startTime) / 1000)).toFixed(2);
-          console.log(`📤 Yüklenen: ${uploadedMB}/${totalMB} MB (${progress}%) - Hız: ${uploadSpeedMBps} MB/s`);
-          lastLogTime = currentTime;
-        }
-      }));
+        fileStream.on('end', () => {
+          console.log('✅ Dosya okuma tamamlandı');
+          fileStream.destroy();
+        });
 
-      // Chunk'ları birleştir
-      await axios.put(`${uploadUrl}?finalize=true`, null, {
-        headers: {
-          'AccessKey': process.env.BUNNY_STORAGE_API_KEY
-        }
+        uploadStream.then((response) => {
+          const endTime = Date.now();
+          const totalTime = ((endTime - startTime) / 1000).toFixed(2);
+          const averageSpeed = ((req.file.size / (1024 * 1024)) / totalTime).toFixed(2);
+          
+          console.log('\n=== YÜKLEME TAMAMLANDI ===');
+          console.log('Toplam süre:', totalTime, 'saniye');
+          console.log('Ortalama hız:', averageSpeed, 'MB/s');
+          console.log('Durum kodu:', response.status);
+          resolve();
+        }).catch((error) => {
+          console.error('❌ Bunny upload hatası:', error.message);
+          reject(error);
+        });
       });
 
       // Geçici dosyayı sil
       fs.unlinkSync(req.file.path);
       console.log('✓ Geçici dosya temizlendi');
-
-      const endTime = Date.now();
-      const totalTime = ((endTime - startTime) / 1000).toFixed(2);
-      const averageSpeed = ((req.file.size / (1024 * 1024)) / totalTime).toFixed(2);
-      
-      console.log('\n=== YÜKLEME TAMAMLANDI ===');
-      console.log('Toplam süre:', totalTime, 'saniye');
-      console.log('Ortalama hız:', averageSpeed, 'MB/s');
 
       // CDN URL'ini oluştur
       const cdnUrl = `https://${process.env.BUNNY_STORAGE_ZONE_NAME}.b-cdn.net/${fileName}`;
@@ -635,12 +638,7 @@ router.post('/upload-video', upload.single('video'), async (req, res) => {
       res.json({
         url: cdnUrl,
         source: 'bunny',
-        message: 'Video başarıyla yüklendi',
-        stats: {
-          duration: totalTime,
-          speed: averageSpeed,
-          size: (req.file.size / (1024 * 1024)).toFixed(2)
-        }
+        message: 'Video başarıyla yüklendi'
       });
 
     } catch (uploadError) {
