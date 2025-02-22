@@ -350,33 +350,58 @@ router.post('/:animeId/episodes/raion', auth, async (req, res) => {
       // CDN URL'ini düzelt (çift slash'i kaldır)
       const cdnUrl = uploadResult.url.replace(/([^:])\/\/+/g, '$1/');
 
-      // Bölümü anime'ye ekle
-      const episodeData = {
-        episodeNumber: parseInt(episodeNumber),
-        title: `${episodeNumber}. Bölüm`,
-        description: '',
-        thumbnail: '',
-        duration: '',
-        videoSources: [{
-          url: cdnUrl,
-          quality: quality || '1080p',
-          language: language || 'TR',
-          type: type || 'Altyazılı',
-          fansub: fansub || null,
-          source: 'Raioncom'
-        }]
-      };
-
       // Mevcut bölümü kontrol et
       const existingEpisodeIndex = season.episodes.findIndex(ep => ep.episodeNumber === parseInt(episodeNumber));
+      
       if (existingEpisodeIndex !== -1) {
-        season.episodes[existingEpisodeIndex] = episodeData;
+        // Mevcut bölüme yeni video kaynağını ekle
+        const existingEpisode = season.episodes[existingEpisodeIndex];
+        const existingSource = existingEpisode.videoSources.find(
+          src => src.fansub && src.fansub.toString() === fansub
+        );
+
+        if (existingSource) {
+          // Aynı fansub'dan kaynak varsa güncelle
+          existingSource.url = cdnUrl;
+          existingSource.quality = quality || '1080p';
+          existingSource.language = language || 'TR';
+          existingSource.type = type || 'Altyazılı';
+        } else {
+          // Yeni fansub kaynağı ekle
+          existingEpisode.videoSources.push({
+            url: cdnUrl,
+            quality: quality || '1080p',
+            language: language || 'TR',
+            type: type || 'Altyazılı',
+            fansub: fansub,
+            source: 'Raioncom'
+          });
+        }
       } else {
+        // Yeni bölüm ekle
+        const episodeData = {
+          episodeNumber: parseInt(episodeNumber),
+          title: `${episodeNumber}. Bölüm`,
+          description: '',
+          thumbnail: '',
+          duration: '',
+          videoSources: [{
+            url: cdnUrl,
+            quality: quality || '1080p',
+            language: language || 'TR',
+            type: type || 'Altyazılı',
+            fansub: fansub,
+            source: 'Raioncom'
+          }]
+        };
         season.episodes.push(episodeData);
       }
 
       // Bölümleri sırala
       season.episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
+
+      // Uploader bilgisini güncelle
+      anime.uploader = req.user._id;
 
       await anime.save();
 
@@ -385,7 +410,7 @@ router.post('/:animeId/episodes/raion', auth, async (req, res) => {
 
       res.json({
         message: 'Bölüm başarıyla eklendi',
-        episode: episodeData
+        episode: season.episodes.find(ep => ep.episodeNumber === parseInt(episodeNumber))
       });
 
     } catch (error) {
