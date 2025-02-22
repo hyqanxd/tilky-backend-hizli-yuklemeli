@@ -334,13 +334,21 @@ router.post('/:animeId/episodes/raion', auth, async (req, res) => {
       // Google Drive'dan indir
       await raionScraper.downloadFromGoogleDrive(searchResult.driveId, tempFilePath);
 
+      // Anime adını URL-safe hale getir
+      const safeAnimeName = animeName.toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
       // BunnyStorage'a yükle
-      const uploadPath = `animes/${anime._id}/episodes/${seasonNumber}-${episodeNumber}.mp4`;
-      const uploadResult = await bunnyStorage.uploadFile(tempFilePath, fs.readFileSync(tempFilePath));
+      const uploadPath = `raion-subs/${safeAnimeName}/sezon-${seasonNumber}/${episodeNumber}.mp4`;
+      const uploadResult = await bunnyStorage.uploadFile(uploadPath, fs.readFileSync(tempFilePath));
 
       if (!uploadResult.success) {
         throw new Error('Video yükleme hatası: ' + uploadResult.error);
       }
+
+      // CDN URL'ini düzelt (çift slash'i kaldır)
+      const cdnUrl = uploadResult.url.replace(/([^:])\/\/+/g, '$1/');
 
       // Bölümü anime'ye ekle
       const episodeData = {
@@ -350,7 +358,7 @@ router.post('/:animeId/episodes/raion', auth, async (req, res) => {
         thumbnail: '',
         duration: '',
         videoSources: [{
-          url: uploadResult.url,
+          url: cdnUrl,
           quality: quality || '1080p',
           language: language || 'TR',
           type: type || 'Altyazılı',
