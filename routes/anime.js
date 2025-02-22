@@ -309,10 +309,21 @@ router.post('/:animeId/episodes/raion', auth, async (req, res) => {
       return res.status(400).json({ message: 'Bölüm numarası, anime adı ve sezon numarası gerekli' });
     }
 
-    // Anime'yi bul
+    // User kontrolü
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: 'Kullanıcı bilgisi bulunamadı' });
+    }
+
+    // Anime'yi bul ve güncelle
     const anime = await Anime.findById(animeId);
     if (!anime) {
       return res.status(404).json({ message: 'Anime bulunamadı' });
+    }
+
+    // Uploader bilgisini kontrol et ve güncelle
+    if (!anime.uploader) {
+      anime.uploader = req.user.id;
+      await anime.save();
     }
 
     // Sezonu kontrol et
@@ -399,9 +410,6 @@ router.post('/:animeId/episodes/raion', auth, async (req, res) => {
 
       // Bölümleri sırala
       season.episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
-
-      // Uploader bilgisini güncelle
-      anime.uploader = req.user._id;
 
       await anime.save();
 
