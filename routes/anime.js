@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Anime = require('../models/Anime');
 const fetch = require('node-fetch');
+const auth = require('../middleware/auth');
 
 // Tüm animeleri getir
 router.get('/list', async (req, res) => {
@@ -13,7 +14,11 @@ router.get('/list', async (req, res) => {
 
     // Ana işlem promise'i
     const dataFetch = Anime.find()
-      .select('title coverImage bannerImage description genres status rating')
+      .select('title coverImage bannerImage description genres status rating uploader')
+      .populate({
+        path: 'uploader',
+        select: 'username profileImage'
+      })
       .sort({ createdAt: -1 });
 
     // Promise.race ile ilk tamamlanan işlemi al
@@ -128,7 +133,7 @@ router.get('/search/anilist', async (req, res) => {
 });
 
 // AniList'ten anime import et
-router.post('/import/anilist/:id', async (req, res) => {
+router.post('/import/anilist/:id', auth, async (req, res) => {
   try {
     const response = await fetch('https://graphql.anilist.co', {
       method: 'POST',
@@ -243,7 +248,8 @@ router.post('/import/anilist/:id', async (req, res) => {
       season: anilistData.season?.toLowerCase() || '',
       seasonYear: anilistData.seasonYear || '',
       studios: anilistData.studios?.nodes?.map(studio => studio.name) || [],
-      seasons: [] // Boş sezon dizisi
+      seasons: [], // Boş sezon dizisi
+      uploader: req.user.id // _id yerine id kullan
     });
 
     await anime.save();
@@ -268,6 +274,10 @@ router.get('/:id', async (req, res) => {
       .populate({
         path: 'seasons.episodes.videoSources.fansub',
         select: 'name logo website'
+      })
+      .populate({
+        path: 'uploader',
+        select: 'username profileImage'
       });
     
     if (!anime) {

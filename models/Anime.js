@@ -91,6 +91,11 @@ const animeSchema = new mongoose.Schema({
       default: ''
     }
   },
+  uploader: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
   originalTitle: {
     type: String,
     default: ''
