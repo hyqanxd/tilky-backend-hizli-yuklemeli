@@ -3,6 +3,14 @@ const router = express.Router();
 const Anime = require('../models/Anime');
 const fetch = require('node-fetch');
 const auth = require('../middleware/auth');
+const raionScraper = require('../services/raionScraper');
+const BunnyStorage = require('../services/bunnyStorage');
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+
+// BunnyStorage instance'ı oluştur
+const bunnyStorage = new BunnyStorage();
 
 // Tüm animeleri getir
 router.get('/list', async (req, res) => {
@@ -288,6 +296,101 @@ router.get('/:id', async (req, res) => {
   } catch (error) {
     console.error('Anime getirme hatası:', error);
     res.status(500).json({ message: 'Anime yüklenirken bir hata oluştu' });
+  }
+});
+
+// Raioncom'dan bölüm ekle
+router.post('/:animeId/episodes/raion', auth, async (req, res) => {
+  try {
+    const { episodeNumber, animeName, seasonNumber, fansub, quality, language, type } = req.body;
+    const animeId = req.params.animeId;
+
+    if (!episodeNumber || !animeName || !seasonNumber) {
+      return res.status(400).json({ message: 'Bölüm numarası, anime adı ve sezon numarası gerekli' });
+    }
+
+    // Anime'yi bul
+    const anime = await Anime.findById(animeId);
+    if (!anime) {
+      return res.status(404).json({ message: 'Anime bulunamadı' });
+    }
+
+    // Sezonu kontrol et
+    const season = anime.seasons.find(s => s.seasonNumber === parseInt(seasonNumber));
+    if (!season) {
+      return res.status(404).json({ message: 'Sezon bulunamadı' });
+    }
+
+    // Raioncom'da ara
+    const searchResult = await raionScraper.searchAnimeEpisode(animeName, episodeNumber);
+    if (!searchResult.found) {
+      return res.status(404).json({ message: 'Bölüm Raioncom\'da bulunamadı' });
+    }
+
+    // Geçici dosya yolu oluştur
+    const tempFilePath = path.join(os.tmpdir(), `${animeName}-${episodeNumber}.mp4`);
+
+    try {
+      // Google Drive'dan indir
+      await raionScraper.downloadFromGoogleDrive(searchResult.driveId, tempFilePath);
+
+      // BunnyStorage'a yükle
+      const uploadPath = `animes/${anime._id}/episodes/${seasonNumber}-${episodeNumber}.mp4`;
+      const uploadResult = await bunnyStorage.uploadFile(tempFilePath, fs.readFileSync(tempFilePath));
+
+      if (!uploadResult.success) {
+        throw new Error('Video yükleme hatası: ' + uploadResult.error);
+      }
+
+      // Bölümü anime'ye ekle
+      const episodeData = {
+        episodeNumber: parseInt(episodeNumber),
+        title: `${episodeNumber}. Bölüm`,
+        description: '',
+        thumbnail: '',
+        duration: '',
+        videoSources: [{
+          url: uploadResult.url,
+          quality: quality || '1080p',
+          language: language || 'TR',
+          type: type || 'Altyazılı',
+          fansub: fansub || null,
+          source: 'Raioncom'
+        }]
+      };
+
+      // Mevcut bölümü kontrol et
+      const existingEpisodeIndex = season.episodes.findIndex(ep => ep.episodeNumber === parseInt(episodeNumber));
+      if (existingEpisodeIndex !== -1) {
+        season.episodes[existingEpisodeIndex] = episodeData;
+      } else {
+        season.episodes.push(episodeData);
+      }
+
+      // Bölümleri sırala
+      season.episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
+
+      await anime.save();
+
+      // Geçici dosyayı sil
+      fs.unlinkSync(tempFilePath);
+
+      res.json({
+        message: 'Bölüm başarıyla eklendi',
+        episode: episodeData
+      });
+
+    } catch (error) {
+      // Hata durumunda geçici dosyayı temizle
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+      throw error;
+    }
+
+  } catch (error) {
+    console.error('Raioncom bölüm ekleme hatası:', error);
+    res.status(500).json({ message: 'Bölüm eklenirken bir hata oluştu', error: error.message });
   }
 });
 
