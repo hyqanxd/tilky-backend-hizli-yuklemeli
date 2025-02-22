@@ -18,7 +18,7 @@ const drive = require('../config/googleDrive');
 const { Readable } = require('stream');
 const { uploadToBunnyStorage, deleteFromBunnyStorage } = require('../utils/bunnyStorage');
 const raionScraper = require('../services/raionScraper');
-const bunnyStorage = require('../services/bunnyStorage');
+const bunnyStorage = require('../services/BunnyStorage');
 const os = require('os');
 
 // E-posta gönderme yapılandırması
