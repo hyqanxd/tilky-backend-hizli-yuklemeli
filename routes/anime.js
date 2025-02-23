@@ -453,9 +453,15 @@ router.post('/:animeId/episodes/kirigana', auth, async (req, res) => {
     const { url, seasonNumber, fansub } = req.body;
     const animeId = req.params.animeId;
 
-    if (!url || !seasonNumber) {
-      return res.status(400).json({ message: 'URL ve sezon numarası gerekli' });
+    if (!url || !seasonNumber || !fansub) {
+      return res.status(400).json({ message: 'URL, sezon numarası ve fansub bilgisi gerekli' });
     }
+
+    console.log('Kirigana bölüm ekleme başlatıldı:', {
+      animeId,
+      seasonNumber,
+      url
+    });
 
     // User kontrolü
     if (!req.user || !req.user.id) {
@@ -481,108 +487,165 @@ router.post('/:animeId/episodes/kirigana', auth, async (req, res) => {
     }
 
     // Kirigana'dan bölümleri çek
+    console.log('Kirigana sayfası taranıyor...');
     const scrapeResult = await kiriganaScraper.scrapeAnimePage(url);
     if (!scrapeResult.success) {
+      console.error('Bölümler çekilemedi:', scrapeResult.error);
       return res.status(500).json({ message: 'Bölümler çekilemedi', error: scrapeResult.error });
     }
 
+    if (!scrapeResult.episodes || scrapeResult.episodes.length === 0) {
+      return res.status(404).json({ message: 'İşlenebilir bölüm bulunamadı' });
+    }
+
+    console.log(`${scrapeResult.episodes.length} bölüm bulundu, işlem başlıyor...`);
+
     // Her bölüm için
+    const results = {
+      total: scrapeResult.episodes.length,
+      successful: 0,
+      failed: 0,
+      skipped: 0
+    };
+
     for (const episode of scrapeResult.episodes) {
-      console.log(`Bölüm ${episode.episodeNumber} işleniyor... (Kaynak: ${episode.source.type})`);
+      try {
+        console.log(`\nBölüm ${episode.episodeNumber} işleniyor...`);
+        console.log('Kaynak tipi:', episode.source.type);
+        console.log('Drive ID:', episode.source.id);
 
-      // Her bölüm için videoSources dizisini başlat
-      if (!episode.videoSources) {
-        episode.videoSources = [];
-      }
+        // Her bölüm için videoSources dizisini başlat
+        if (!episode.videoSources) {
+          episode.videoSources = [];
+        }
 
-      if (episode.source.type === 'gdrive') {
-        // Google Drive işlemi
-        const tempFilePath = path.join(os.tmpdir(), `${anime.title.romaji}-${episode.episodeNumber}.mp4`);
-        
+        if (episode.source.type === 'gdrive' && episode.source.id) {
+          // Google Drive işlemi
+          const tempFilePath = path.join(os.tmpdir(), `${anime.title.romaji}-${episode.episodeNumber}.mp4`);
+          
+          try {
+            console.log('Google Drive indirme başlıyor...');
+            // Google Drive'dan indir
+            await raionScraper.downloadFromGoogleDrive(episode.source.id, tempFilePath);
+            console.log('Google Drive indirme tamamlandı');
+
+            // Anime adını URL-safe hale getir
+            const safeAnimeName = anime.title.romaji.toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '');
+
+            // BunnyStorage'a yükle
+            const uploadPath = `kirigana/${safeAnimeName}/sezon-${seasonNumber}/${episode.episodeNumber}.mp4`;
+            console.log('Bunny Storage\'a yükleniyor:', uploadPath);
+            
+            const uploadResult = await bunnyStorage.uploadFile(uploadPath, fs.readFileSync(tempFilePath));
+
+            if (!uploadResult.success) {
+              throw new Error('Video yükleme hatası: ' + uploadResult.error);
+            }
+
+            console.log('Bunny Storage yükleme başarılı');
+
+            // CDN URL'ini düzelt
+            const cdnUrl = uploadResult.url.replace(/([^:])\/\/+/g, '$1/');
+
+            // Video kaynağı nesnesini oluştur ve ekle
+            episode.videoSources.push({
+              url: cdnUrl,
+              quality: '1080p',
+              language: 'TR',
+              type: 'Altyazılı',
+              fansub: fansub,
+              source: 'Kirigana-GDrive'
+            });
+
+            // Geçici dosyayı sil
+            if (fs.existsSync(tempFilePath)) {
+              fs.unlinkSync(tempFilePath);
+              console.log('Geçici dosya silindi');
+            }
+
+            console.log(`Bölüm ${episode.episodeNumber} için Google Drive işlemi tamamlandı`);
+
+          } catch (error) {
+            // Hata durumunda geçici dosyayı temizle
+            if (fs.existsSync(tempFilePath)) {
+              fs.unlinkSync(tempFilePath);
+            }
+            console.error(`Bölüm ${episode.episodeNumber} için Google Drive işleme hatası:`, error.message);
+            results.failed++;
+            continue; // Bu bölümü atla ve diğerine geç
+          }
+        } else {
+          console.warn(`Bölüm ${episode.episodeNumber} için geçerli kaynak bulunamadı`);
+          results.skipped++;
+          continue;
+        }
+
+        // Video kaynağı eklenmediyse bu bölümü atla
+        if (!episode.videoSources.length) {
+          console.warn(`Bölüm ${episode.episodeNumber} için hiç video kaynağı eklenemedi`);
+          results.skipped++;
+          continue;
+        }
+
         try {
-          console.log('Google Drive indirme başlıyor..');
-          // Google Drive'dan indir
-          await raionScraper.downloadFromGoogleDrive(episode.source.id, tempFilePath);
+          // Mevcut bölümü kontrol et
+          const existingEpisodeIndex = season.episodes.findIndex(ep => ep.episodeNumber === episode.episodeNumber);
+          
+          if (existingEpisodeIndex !== -1) {
+            // Mevcut bölüme yeni video kaynağını ekle
+            const existingEpisode = season.episodes[existingEpisodeIndex];
+            
+            // videoSources dizisini kontrol et
+            if (!existingEpisode.videoSources) {
+              existingEpisode.videoSources = [];
+            }
 
-          // Anime adını URL-safe hale getir
-          const safeAnimeName = anime.title.romaji.toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '');
+            // Aynı fansub'dan kaynak var mı kontrol et
+            const existingSource = existingEpisode.videoSources.find(
+              src => src.fansub && src.fansub.toString() === fansub
+            );
 
-          // BunnyStorage'a yükle
-          const uploadPath = `kirigana/${safeAnimeName}/sezon-${seasonNumber}/${episode.episodeNumber}.mp4`;
-          const uploadResult = await bunnyStorage.uploadFile(uploadPath, fs.readFileSync(tempFilePath));
+            if (existingSource) {
+              // Varolan kaynağı güncelle
+              Object.assign(existingSource, episode.videoSources[0]);
+            } else {
+              // Yeni video kaynağını ekle
+              existingEpisode.videoSources.push(...episode.videoSources);
+            }
 
-          if (!uploadResult.success) {
-            throw new Error('Video yükleme hatası: ' + uploadResult.error);
+            console.log(`Bölüm ${episode.episodeNumber} güncellendi`);
+
+          } else {
+            // Yeni bölüm ekle
+            const episodeData = {
+              episodeNumber: episode.episodeNumber,
+              title: `${episode.episodeNumber}. Bölüm`,
+              description: '',
+              thumbnail: '',
+              duration: '',
+              staff: episode.staff,
+              videoSources: episode.videoSources
+            };
+            season.episodes.push(episodeData);
+            console.log(`Bölüm ${episode.episodeNumber} eklendi`);
           }
 
-          // CDN URL'ini düzelt
-          const cdnUrl = uploadResult.url.replace(/([^:])\/\/+/g, '$1/');
+          results.successful++;
 
-          // Video kaynağı nesnesini oluştur ve ekle
-          episode.videoSources.push({
-            url: cdnUrl,
-            quality: '1080p',
-            language: 'TR',
-            type: 'Altyazılı',
-            fansub: fansub,
-            source: 'Kirigana-GDrive'
-          });
-
-          // Geçici dosyayı sil
-          fs.unlinkSync(tempFilePath);
-          console.log(`Bölüm ${episode.episodeNumber} için Google Drive işlemi tamamlandı`);
+          // Her başarılı bölüm sonrası değişiklikleri kaydet
+          await anime.save();
+          console.log(`Bölüm ${episode.episodeNumber} veritabanına kaydedildi`);
 
         } catch (error) {
-          // Hata durumunda geçici dosyayı temizle
-          if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-          }
-          console.warn(`Bölüm ${episode.episodeNumber} için Google Drive işleme hatası:`, error.message);
-          continue; // Bu bölümü atla ve diğerine geç
-        }
-      }
-
-      // Video kaynağı eklenmediyse bu bölümü atla
-      if (!episode.videoSources.length) {
-        console.warn(`Bölüm ${episode.episodeNumber} için hiç video kaynağı eklenemedi`);
-        continue;
-      }
-
-      try {
-        // Mevcut bölümü kontrol et
-        const existingEpisodeIndex = season.episodes.findIndex(ep => ep.episodeNumber === episode.episodeNumber);
-        
-        if (existingEpisodeIndex !== -1) {
-          // Mevcut bölüme yeni video kaynağını ekle
-          const existingEpisode = season.episodes[existingEpisodeIndex];
-          
-          // videoSources dizisini kontrol et
-          if (!existingEpisode.videoSources) {
-            existingEpisode.videoSources = [];
-          }
-
-          // Yeni video kaynağını ekle
-          existingEpisode.videoSources.push(...episode.videoSources);
-          console.log(`Bölüm ${episode.episodeNumber} güncellendi`);
-
-        } else {
-          // Yeni bölüm ekle
-          const episodeData = {
-            episodeNumber: episode.episodeNumber,
-            title: `${episode.episodeNumber}. Bölüm`,
-            description: '',
-            thumbnail: '',
-            duration: '',
-            staff: episode.staff,
-            videoSources: episode.videoSources
-          };
-          season.episodes.push(episodeData);
-          console.log(`Bölüm ${episode.episodeNumber} eklendi`);
+          console.error(`Bölüm ${episode.episodeNumber} kaydedilirken hata:`, error);
+          results.failed++;
+          continue;
         }
       } catch (error) {
-        console.error(`Bölüm ${episode.episodeNumber} kaydedilirken hata:`, error);
+        console.error(`Bölüm ${episode.episodeNumber} işlenirken hata:`, error);
+        results.failed++;
         continue;
       }
     }
@@ -590,25 +653,20 @@ router.post('/:animeId/episodes/kirigana', auth, async (req, res) => {
     // Bölümleri sırala
     season.episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
 
-    // Debug logları
-    console.log('Kaydedilecek bölümler:', season.episodes.map(ep => ({
-      episodeNumber: ep.episodeNumber,
-      videoSources: ep.videoSources.map(vs => ({
-        source: vs.source,
-        url: vs.url,
-        isEmbed: vs.isEmbed
-      }))
-    })));
-
+    // Son kez kaydet
     await anime.save();
+
+    // Sonuçları logla
+    console.log('\n=== TOPLU YÜKLEME SONUÇLARI ===');
+    console.log(`Toplam bölüm: ${results.total}`);
+    console.log(`Başarılı: ${results.successful}`);
+    console.log(`Başarısız: ${results.failed}`);
+    console.log(`Atlanan: ${results.skipped}`);
+    console.log('===============================\n');
 
     res.json({
       message: 'Bölümler başarıyla eklendi',
-      addedEpisodes: scrapeResult.episodes.length,
-      episodes: season.episodes.map(ep => ({
-        episodeNumber: ep.episodeNumber,
-        videoSources: ep.videoSources.length
-      }))
+      results
     });
 
   } catch (error) {
