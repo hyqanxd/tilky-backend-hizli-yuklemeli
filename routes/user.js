@@ -1277,4 +1277,42 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// Kullanıcının yüklediği tüm animeleri getir
+router.get('/:userId/animes', async (req, res) => {
+  try {
+    const animes = await Anime.find({ uploader: req.params.userId })
+      .select('title seasons')
+      .populate({
+        path: 'seasons.episodes',
+        select: 'episodeNumber videoSources'
+      });
+    
+    console.log('Bulunan anime sayısı:', animes.length);
+    
+    // Toplam video sayısını hesapla
+    const totalVideos = animes.reduce((total, anime) => {
+      console.log('Anime:', anime.title);
+      console.log('Sezon sayısı:', anime.seasons?.length || 0);
+      
+      const seasonTotal = anime.seasons?.reduce((acc, season) => {
+        console.log('Sezon:', season.seasonNumber, 'Bölüm sayısı:', season.episodes?.length || 0);
+        return acc + (season.episodes?.length || 0);
+      }, 0) || 0;
+      
+      console.log('Bu animedeki toplam bölüm:', seasonTotal);
+      return total + seasonTotal;
+    }, 0);
+    
+    console.log('Toplam video sayısı:', totalVideos);
+    
+    res.json({
+      animes,
+      totalVideos
+    });
+  } catch (error) {
+    console.error('Kullanıcı animeleri getirme hatası:', error);
+    res.status(500).json({ message: 'Animeler yüklenirken bir hata oluştu' });
+  }
+});
+
 module.exports = router; 
