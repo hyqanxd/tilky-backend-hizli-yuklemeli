@@ -37,6 +37,11 @@ const userSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  discordId: {
+    type: String,
+    sparse: true,
+    unique: true
+  },
   username: {
     type: String,
     required: true,

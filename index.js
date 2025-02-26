@@ -12,6 +12,7 @@ const fansubRoutes = require('./routes/fansub');
 const donationRoutes = require('./routes/donation');
 const postRoutes = require('./routes/post');
 const mangaRoutes = require('./routes/manga');
+const giftRoutes = require('./routes/giftRoutes');
 
 const app = express();
 
@@ -57,7 +58,7 @@ app.use(cors({
 
 // Body parser ayarları - Stripe webhook için özel yapılandırma
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/donation/webhook') {
+  if (req.originalUrl === '/api/donation/webhook' || req.originalUrl === '/api/gift/webhook') {
     next();
   } else {
     express.json({ 
@@ -113,6 +114,9 @@ require('./models/Anime');
 require('./models/Fansub');
 require('./models/Donation');
 require('./models/Manga');
+require('./models/GiftRole');
+require('./models/GiftHistory');
+require('./models/Gift');
 
 // Bakım modu middleware'ini ekle
 app.use(adminRoutes.checkMaintenance);
@@ -126,6 +130,7 @@ app.use('/api/fansub', fansubRoutes);
 app.use('/api/donation', donationRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/manga', mangaRoutes);
+app.use('/api/gift', giftRoutes);
 
 // Sağlık kontrolü endpoint'i
 app.get('/health', (req, res) => {

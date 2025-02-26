@@ -35,6 +35,7 @@ const fansubRoutes = require('./routes/fansub');
 const donationRoutes = require('./routes/donation');
 const postRoutes = require('./routes/post');
 const mangaRoutes = require('./routes/manga');
+const giftRoutes = require('./routes/giftRoutes');
 
 // Auth middleware
 app.use((req, res, next) => {
@@ -67,6 +68,7 @@ app.use('/api/anime', animeRoutes);
 app.use('/api/fansub', fansubRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/manga', mangaRoutes);
+app.use('/api/gift', giftRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

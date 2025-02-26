@@ -25,10 +25,12 @@ const donationSchema = new mongoose.Schema({
   orderId: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    sparse: true
   },
   paymentId: {
     type: String,
+    unique: true,
     sparse: true
   },
   status: {
@@ -43,7 +45,18 @@ const donationSchema = new mongoose.Schema({
 });
 
 // Endeksler
-donationSchema.index({ orderId: 1 });
 donationSchema.index({ status: 1, createdAt: -1 });
 
-module.exports = mongoose.model('Donation', donationSchema); 
+const Donation = mongoose.model('Donation', donationSchema);
+
+// Index senkronizasyonu
+(async () => {
+  try {
+    await Donation.syncIndexes();
+    console.log('Donation indeksleri senkronize edildi');
+  } catch (error) {
+    console.error('Index senkronizasyon hatası:', error);
+  }
+})();
+
+module.exports = Donation; 
