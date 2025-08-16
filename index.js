@@ -22,17 +22,26 @@ const totalHeapSize = v8.getHeapStatistics().total_available_size;
 const totalHeapSizeInGB = (totalHeapSize / 1024 / 1024 / 1024).toFixed(2);
 console.log(`Total heap size (GB) = ${totalHeapSizeInGB}`);
 
-// Timeout ayarları
-app.use((req, res, next) => {
-  // 10 dakika timeout
-  req.setTimeout(600000);
-  res.setTimeout(600000);
-  next();
-});
+// V8 heap size limitleri
+v8.setFlagsFromString('--max-old-space-size=4096'); // 4GB limit
 
-// Body parser limitleri
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Memory monitoring
+setInterval(() => {
+  const memUsage = process.memoryUsage();
+  const heapUsed = (memUsage.heapUsed / 1024 / 1024).toFixed(2);
+  const heapTotal = (memUsage.heapTotal / 1024 / 1024).toFixed(2);
+  const external = (memUsage.external / 1024 / 1024).toFixed(2);
+  
+  console.log(`Memory Usage - Heap Used: ${heapUsed}MB, Heap Total: ${heapTotal}MB, External: ${external}MB`);
+  
+  // Memory limit kontrolü
+  if (memUsage.heapUsed > 3 * 1024 * 1024 * 1024) { // 3GB
+    console.log('Memory limit aşıldı, garbage collection tetikleniyor...');
+    if (global.gc) {
+      global.gc();
+    }
+  }
+}, 60000); // Her 1 dakikada bir
 
 // Garbage collection için interval
 setInterval(() => {
@@ -44,7 +53,19 @@ setInterval(() => {
   } catch (e) {
     console.log('Garbage collection failed:', e);
   }
-}, 30000); // Her 30 saniyede bir
+}, 60000); // Her 1 dakikada bir
+
+// Timeout ayarları
+app.use((req, res, next) => {
+  // 10 dakika timeout
+  req.setTimeout(600000);
+  res.setTimeout(600000);
+  next();
+});
+
+// Body parser limitleri
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // CORS ayarları
 app.use(cors({
@@ -88,13 +109,19 @@ app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 30000,
   socketTimeoutMS: 45000,
-  connectTimeoutMS: 10000
+  connectTimeoutMS: 30000,
+  maxPoolSize: 10,
+  minPoolSize: 1,
+  maxIdleTimeMS: 30000,
+  retryWrites: true,
+  w: 'majority'
 }).then(() => {
   console.log('MongoDB bağlantısı başarılı');
 }).catch((err) => {
   console.error('MongoDB bağlantı hatası:', err);
+  process.exit(1);
 });
 
 // Mongoose bağlantı havuzu ayarları
@@ -104,6 +131,34 @@ mongoose.connection.on('connected', () => {
 
 mongoose.connection.on('error', (err) => {
   console.error('Mongoose bağlantı hatası:', err);
+  if (err.code === 'ECONNRESET') {
+    console.log('Bağlantı yeniden kurulmaya çalışılıyor...');
+    setTimeout(() => {
+      mongoose.connect(process.env.MONGODB_URI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        serverSelectionTimeoutMS: 30000,
+        socketTimeoutMS: 45000,
+        connectTimeoutMS: 30000
+      });
+    }, 5000);
+  }
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB bağlantısı kesildi');
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  try {
+    await mongoose.connection.close();
+    console.log('MongoDB bağlantısı kapatıldı');
+    process.exit(0);
+  } catch (err) {
+    console.error('Shutdown hatası:', err);
+    process.exit(1);
+  }
 });
 
 // Model şemalarını kaydet
@@ -172,8 +227,48 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT}`);
+});
+
+// Server timeout ayarları
+server.timeout = 300000; // 5 dakika
+server.keepAliveTimeout = 65000; // 65 saniye
+server.headersTimeout = 66000; // 66 saniye
+
+// Server error handling
+server.on('error', (err) => {
+  console.error('Server error:', err);
+  if (err.code === 'ECONNRESET') {
+    console.log('Connection reset error, server restarting...');
+    server.close(() => {
+      process.exit(1);
+    });
+  }
+});
+
+// Uncaught exception handling
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  if (err.code === 'ECONNRESET') {
+    console.log('ECONNRESET hatası yakalandı, server kapatılıyor...');
+    server.close(() => {
+      process.exit(1);
+    });
+  } else {
+    console.log('Beklenmeyen hata, server kapatılıyor...');
+    server.close(() => {
+      process.exit(1);
+    });
+  }
+});
+
+// Unhandled rejection handling
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  server.close(() => {
+    process.exit(1);
+  });
 });
 
 module.exports = app;
