@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+/*const { Client, GatewayIntentBits } = require('discord.js');
 const User = require('../models/User');
 
 const client = new Client({
@@ -169,4 +169,4 @@ module.exports = {
   grantGenerousRole,
   getDiscordUserInfo,
   sendGiftNotification
-}; 
+}; */
